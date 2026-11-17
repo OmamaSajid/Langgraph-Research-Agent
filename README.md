@@ -1,31 +1,44 @@
-# Tool-Using Research Agent
+# LangGraph Research Agent
 
-A ReAct-style loop where Claude chooses between tools to answer a question with citations.
+A tool-using research agent built as a **LangGraph state machine**. It answers a research question by choosing between tools (web search, fetch page, summarise), cites only pages it actually fetched, and stops at a hard step budget. It runs on Groq's free tier, so no paid API is needed.
 
-## Tools
+> 🎥 **Walkthrough video:** _add link here_
+
+## How it works
+
+```mermaid
+flowchart TD
+    S([START]) --> A[agent]
+    A -- tool call --> T[tools]
+    T --> A
+    A -- final_answer --> V[verify]
+    V -- ok, or one retry used --> E([END])
+    V -- uncited claims, first time --> A
+```
+
+| Node | Job |
+|---|---|
+| `agent` | The LLM reads the shared state and **decides the next tool** (or decides to finish). |
+| `tools` | Runs the chosen tool. A failure comes back as an `ERROR:` message the agent can read and react to. |
+| `verify` | Rejects any answer with a sentence that has no `[S#]` citation, or that cites a source never fetched. It gets one retry, then the answer is shown with a warning. |
+
+**Tools the agent chooses between**
+
 | Tool | Purpose |
 |---|---|
-| `web_search` | DuckDuckGo search (no key needed) |
-| `fetch_page` | Downloads a page, registers it as citable `[S#]` |
-| `summarise` | Small-model summary of a fetched source |
-| `final_answer` | Ends the loop with a cited answer |
+| `web_search` | DuckDuckGo search (no API key needed). Snippets are not citable. |
+| `fetch_page` | Downloads a page and registers it as a citable source `[S1]`, `[S2]`, ... |
+| `summarise` | Small-model summary of a fetched source. |
+| `final_answer` | Ends the run with a cited answer. |
 
-## How it meets the requirements
-- **2+ tools**: model decides the next call each step.
-- **Hard step limit**: `MAX_STEPS` (default 10). On the last step `tool_choice` forces `final_answer`, so the loop can't run on.
-- **Traceable claims**: only *fetched* pages get an ID. `check_citations` rejects answers with uncited sentences or unknown IDs (one retry, then a visible warning). Sources are listed with URLs.
-- **Failure handling**: every tool returns an `ERROR:` message (flagged `is_error`) instead of crashing; the agent retries with another query/URL or admits insufficient evidence.
+## Requirements checklist
 
-## versions
-- `agent_graph.py`: LangGraph state machine (nodes `agent` -> `tools` -> `agent`, plus `verify`). Same tools; `python agent_graph.py --graph` prints the Mermaid diagram. Step budget = state counter + forced `final_answer` + `recursion_limit`.
-
-## Run
-```bash
-pip install -r requirements.txt
-export ANTHROPIC_API_KEY=sk-...
-python agent.py "How does retrieval-augmented generation reduce hallucinations?"
-```
-Env: `MAX_STEPS`, `AGENT_MODEL`, `SUMMARY_MODEL`.
+| Requirement | How it is met | Seen in |
+|---|---|---|
+| At least two distinct tools the agent can choose between | `web_search`, `fetch_page` and `summarise`. The model picks one at every step. | Runs 1 and 2 use all three |
+| A hard step limit | `MAX_STEPS` = 8. The last step offers no tools: the agent writes the answer from pages already fetched. LangGraph's `recursion_limit` is a second safety net. | Every run ends at `step 8/8` |
+| Every claim traceable to a fetched source | Only fetched pages get an ID. `verify` checks that every sentence cites a real one, and the URLs are listed under **Sources**. | Runs 1 and 2 |
+| Graceful handling when a tool fails or returns nothing | Tool errors become messages the agent reads, invalid model output is retried inside the step budget, and with no evidence the agent says so instead of inventing facts. | Runs 2 and 3 |
 
 ## Example runs
 
@@ -76,11 +89,51 @@ python agent_groq.py "What did Zorblax Quentin publish about quantum turnips in 
 - **No invented facts:** it says the sources do not contain this information. The Sources list is empty because nothing was fetched.
 - **The `Warning: unverified` line is the citation check working.** That sentence has no `[S#]` because there was nothing to cite, so the checker flagged it. For an honest "no evidence" answer, this is the intended behaviour.
 
-## Free option: Groq
-`agent_groq.py` is the same LangGraph agent running on Groq's free tier (Llama 3.3 70B).
-```bash
+## Run it yourself
+
+Requires Python 3.10+ and a free Groq API key from [console.groq.com](https://console.groq.com).
+
+**Windows (PowerShell)**
+```powershell
+python -m venv venv
+venv\Scripts\Activate.ps1
 pip install -r requirements-groq.txt
-export GROQ_API_KEY=gsk_...      # free at console.groq.com
-python agent_groq.py "your question"
+$env:GROQ_API_KEY="gsk_your_key_here"
+python agent_groq.py "How do black holes form?"
 ```
-Pages are truncated to 4k chars to stay inside free-tier token limits.
+
+**Mac / Linux**
+```bash
+python -m venv venv
+source venv/bin/activate
+pip install -r requirements-groq.txt
+export GROQ_API_KEY=gsk_your_key_here
+python agent_groq.py "How do black holes form?"
+```
+
+Print the graph as a Mermaid diagram: `python agent_groq.py --graph`
+
+Each run is also saved to `runs/last_run.txt` (this file is not committed).
+
+**Settings** (environment variables)
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `MAX_STEPS` | `8` | The hard step budget |
+| `AGENT_MODEL` | `openai/gpt-oss-120b` | Model that decides which tool to call |
+| `SUMMARY_MODEL` | `openai/gpt-oss-20b` | Model used by the `summarise` tool |
+
+## Files
+
+| File | What it is |
+|---|---|
+| `agent_groq.py` | The LangGraph agent (runs on Groq's free tier) |
+| `requirements-groq.txt` | Python dependencies, including `langgraph` |
+| `images/` | Screenshots of the three example runs |
+| `WALKTHROUGH.md` | Script for the recorded walkthrough |
+
+## Limitations
+
+- `verify` confirms every sentence cites a page that was really fetched. It does **not** check that the page actually says it. Pages are cut to 4,000 characters, so a cited claim could come from the model's background knowledge.
+- The small free models sometimes call tools that don't exist. The agent recovers, but each mistake uses up one of the 8 steps.
+- Free-tier rate limits may mean waiting a minute between runs.
