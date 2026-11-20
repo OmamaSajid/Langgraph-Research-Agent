@@ -1,8 +1,7 @@
 # LangGraph Research Agent
 
-A tool-using research agent built as a **LangGraph state machine**. It answers a research question by choosing between tools (web search, fetch page, summarise), cites only pages it actually fetched, and stops at a hard step budget. It runs on Groq's free tier, so no paid API is needed.
+A tool-using research agent built as a **LangGraph state machine**. It answers a research question by choosing between tools (web search, fetch page, summarise), cites only pages it actually fetched, and stops at a hard step budget
 
-> 🎥 **Walkthrough video:** _add link here_
 
 ## How it works
 
